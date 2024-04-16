@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:slice"
 import "core:math"
+import "core:math/linalg"
 import sdl "vendor:sdl2"
 
 win_width: int = 800
@@ -13,7 +14,7 @@ pixels: []u32 = nil
 FPS :: 30
 FRAME_TARGET_TIME :: 1000 / FPS
 FOV :: 640
-ORIGIN :: Vec3 { 0, 0, -5. }
+ORIGIN :: Vec3 { 0, 0, 0 }
 
 triangles_to_render := make([dynamic]Triangle, 64)
 
@@ -46,7 +47,7 @@ main :: proc() {
         i32(win_height),
     )
 
-    result, obj_ok := mesh_obj_load("./assets/f22.obj")
+    result, obj_ok := mesh_obj_load("./assets/cube.obj")
     mesh = result
 
     if !obj_ok {
@@ -94,33 +95,58 @@ update :: proc() {
     }
 
     clear(&triangles_to_render)
-    mesh.rotation.x += 0.01
+    mesh.rotation += 0.01
 
-    for i in 0..<len(mesh.faces) {
-        face := mesh.faces[i]
+    for face in mesh.faces {
         vertices: [3]Vec3 = {
             mesh.vertices[face.a - 1],
             mesh.vertices[face.b - 1],
             mesh.vertices[face.c - 1],
         }
 
-        projected_triange: Triangle = ---
+        transformed_vertices := [3]Vec3 { }
 
-        for vertex, i in vertices {
-            p := vec3_rot_x(vertex, mesh.rotation.x)
+        #unroll for i in 0..<len(vertices) {
+            p := vec3_rot_x(vertices[i], mesh.rotation.x)
             p = vec3_rot_y(p, mesh.rotation.y)
             p = vec3_rot_z(p, mesh.rotation.z)
 
-            p.z -= ORIGIN.z
+            // Translate away from the camera
+            p.z += 5 
 
-            projected := project_perspective(p)
+            transformed_vertices[i] = p
+        }
+
+        // Backface culling
+        a := transformed_vertices[0]
+        b := transformed_vertices[1]
+        c := transformed_vertices[2]
+
+        ab := linalg.normalize(b - a)
+        ac := linalg.normalize(c - a)
+        face_normal := linalg.normalize(linalg.cross(ab, ac))
+
+        camera_ray := ORIGIN - a
+        camera_normal := linalg.dot(face_normal, camera_ray)
+
+        if camera_normal < 0 {
+            continue
+        }
+
+        projected_triangle: Triangle = ---
+
+        // Project, scale and translate
+        #unroll for i in 0..<len(transformed_vertices) {
+            projected := project_perspective(transformed_vertices[i])
+
+            // Scale and translate to the middle of the screen
             projected.x += f32(win_width) / 2
             projected.y += f32(win_height) / 2
 
-            projected_triange[i] = projected
+            projected_triangle[i] = projected
         }
 
-        append(&triangles_to_render, projected_triange)
+        append(&triangles_to_render, projected_triangle)
     }
 }
 
