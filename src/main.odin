@@ -26,6 +26,12 @@ Camera :: struct {
     angle: f32
 }
 
+Render_Mode :: enum {
+    Wireframe,
+    Solid_Color,
+    All
+} 
+
 main :: proc() {
     window, renderer, ok := initialize_window()
 
@@ -56,6 +62,9 @@ main :: proc() {
         return
     }
 
+    render_mode := Render_Mode.All
+    cull := true 
+
     game: for {
         event: sdl.Event
         sdl.PollEvent(&event)
@@ -63,20 +72,28 @@ main :: proc() {
         #partial switch event.type {
             case .QUIT:
                 break game
-            case .KEYDOWN:
-                if event.key.keysym.sym == .ESCAPE {
-                    break game
+            case .KEYUP:
+                #partial switch event.key.keysym.sym {
+                    case .ESCAPE:
+                        break game
+                    case .NUM1:
+                        render_mode = .All
+                    case .NUM2:
+                        render_mode = .Wireframe
+                    case .NUM3:
+                        render_mode = .Solid_Color
+                    case .c:
+                        cull = !cull
                 }
-            case:
         }
 
         //sdl.SetRenderDrawColor(renderer, 0, 0, 0, 255)
         //sdl.RenderClear(renderer)
 
-        update()
+        update(cull)
 
         slice.fill(pixels, 0x00000000)
-        render()
+        render(render_mode)
 
         sdl.UpdateTexture(texture, nil, slice.first_ptr(pixels), i32(win_width) * size_of(u32))
         sdl.RenderCopy(renderer, texture, nil, nil)
@@ -84,7 +101,7 @@ main :: proc() {
     }
 }
 
-update :: proc() {
+update :: proc(cull: bool) {
     delta := sdl.GetTicks() - prev_frame_time
     prev_frame_time += delta
 
@@ -118,19 +135,21 @@ update :: proc() {
         }
 
         // Backface culling
-        a := transformed_vertices[0]
-        b := transformed_vertices[1]
-        c := transformed_vertices[2]
+        if cull {
+            a := transformed_vertices[0]
+            b := transformed_vertices[1]
+            c := transformed_vertices[2]
 
-        ab := linalg.normalize(b - a)
-        ac := linalg.normalize(c - a)
-        face_normal := linalg.normalize(linalg.cross(ab, ac))
+            ab := linalg.normalize(b - a)
+            ac := linalg.normalize(c - a)
+            face_normal := linalg.normalize(linalg.cross(ab, ac))
 
-        camera_ray := ORIGIN - a
-        camera_normal := linalg.dot(face_normal, camera_ray)
+            camera_ray := ORIGIN - a
+            camera_normal := linalg.dot(face_normal, camera_ray)
 
-        if camera_normal < 0 {
-            continue
+            if camera_normal < 0 {
+                continue
+            }
         }
 
         projected_triangle: Triangle = ---
@@ -150,21 +169,53 @@ update :: proc() {
     }
 }
 
-render :: proc() {
+render :: proc(mode: Render_Mode) {
     draw_grid()
 
-    #no_bounds_check for i in 0..<len(triangles_to_render) {
-        triangle := triangles_to_render[i]
-        draw_rect(int(triangle[0].x), int(triangle[0].y), 3, 3, 0xFFFFFF00)
-        draw_rect(int(triangle[1].x), int(triangle[1].y), 3, 3, 0xFFFFFF00)
-        draw_rect(int(triangle[2].x), int(triangle[2].y), 3, 3, 0xFFFFFF00)
+    switch mode {
+        case .All:
+            #no_bounds_check for i in 0..<len(triangles_to_render) {
+                triangle := triangles_to_render[i]
 
-        draw_triangle(
-            { int(triangle[0].x), int(triangle[0].y), },
-            { int(triangle[1].x), int(triangle[1].y), },
-            { int(triangle[2].x), int(triangle[2].y), },
-            0xFF00FF00,
-        )
+                draw_filled_triangle(
+                    { int(triangle[0].x), int(triangle[0].y), },
+                    { int(triangle[1].x), int(triangle[1].y), },
+                    { int(triangle[2].x), int(triangle[2].y), },
+                    0xFFFFFFF,
+                )
+
+                draw_triangle(
+                    { int(triangle[0].x), int(triangle[0].y), },
+                    { int(triangle[1].x), int(triangle[1].y), },
+                    { int(triangle[2].x), int(triangle[2].y), },
+                    0xFFF00FF,
+                )
+            }
+        case .Wireframe:
+            #no_bounds_check for i in 0..<len(triangles_to_render) {
+                triangle := triangles_to_render[i]
+                draw_rect(int(triangle[0].x), int(triangle[0].y), 3, 3, 0xFFFFFF00)
+                draw_rect(int(triangle[1].x), int(triangle[1].y), 3, 3, 0xFFFFFF00)
+                draw_rect(int(triangle[2].x), int(triangle[2].y), 3, 3, 0xFFFFFF00)
+
+                draw_triangle(
+                    { int(triangle[0].x), int(triangle[0].y), },
+                    { int(triangle[1].x), int(triangle[1].y), },
+                    { int(triangle[2].x), int(triangle[2].y), },
+                    0xFFF00FF,
+                )
+            }
+        case .Solid_Color:
+            #no_bounds_check for i in 0..<len(triangles_to_render) {
+                triangle := triangles_to_render[i]
+
+                draw_filled_triangle(
+                    { int(triangle[0].x), int(triangle[0].y), },
+                    { int(triangle[1].x), int(triangle[1].y), },
+                    { int(triangle[2].x), int(triangle[2].y), },
+                    0xFFF00FF,
+                )
+            }
     }
 }
 
@@ -211,6 +262,68 @@ draw_triangle :: #force_inline proc "contextless" (p1: [2]int, p2: [2]int, p3: [
     draw_line({p1.x, p1.y}, {p2.x, p2.y}, color)
     draw_line({p2.x, p2.y}, {p3.x, p3.y}, color)
     draw_line({p3.x, p3.y}, {p1.x, p1.y}, color)
+}
+
+draw_filled_triangle :: #force_inline proc(p1: [2]int, p2: [2]int, p3: [2]int, color: u32) {
+    p1 := p1
+    p2 := p2
+    p3 := p3
+
+    if p1.y > p2.y {
+        slice.ptr_swap_non_overlapping(&p1, &p2, size_of(int) * 2)
+    }
+
+    if p2.y > p3.y {
+        slice.ptr_swap_non_overlapping(&p2, &p3, size_of(int) * 2)
+    }
+
+    if p1.y > p2.y {
+        slice.ptr_swap_non_overlapping(&p1, &p2, size_of(int) * 2)
+    }
+
+    if p2.y == p3.y {
+        // The triangle itself has a flat bottom
+        fill_flat_btm(p1, p2, p3, color)
+    } else if p1.y == p2.y {
+        // The triangle itself has a flat top
+        fill_flat_top(p1, p2, p3, color)
+    } else {
+        x_mid := (f32((p3.x - p1.x) * (p2.y - p1.y)) / f32(p3.y - p1.y)) + f32(p1.x)
+        p_mid := [2]int { int(x_mid), p2.y }
+
+        fill_flat_btm(p1, p2, p_mid, color)
+        fill_flat_top(p2, p_mid, p3, color)
+    }
+}
+
+fill_flat_btm :: #force_inline proc(p1: [2]int, p2: [2]int, p3: [2]int, color: u32) {
+    inv_slope_1 := f32(p2.x - p1.x) / f32(p2.y - p1.y)
+    inv_slope_2 := f32(p3.x - p1.x) / f32(p3.y - p1.y)
+
+    x_start := f32(p1.x)
+    x_end := f32(p1.x)
+
+    for y in p1.y..=p3.y {
+        draw_line({ int(x_start), y }, { int(x_end), y }, color)
+
+        x_start += inv_slope_1
+        x_end += inv_slope_2
+    }
+}
+
+fill_flat_top :: #force_inline proc(p1: [2]int, p2: [2]int, p3: [2]int, color: u32) {
+    inv_slope_1 := f32(p3.x - p1.x) / f32(p3.y - p1.y)
+    inv_slope_2 := f32(p3.x - p2.x) / f32(p3.y - p2.y)
+
+    x_start := f32(p3.x)
+    x_end := f32(p3.x)
+
+    for y := p3.y; y >= p1.y; y -= 1 {
+        draw_line({ int(x_start), y }, { int(x_end), y }, color)
+
+        x_start -= inv_slope_1
+        x_end -= inv_slope_2
+    }
 }
 
 set_pixel :: #force_inline proc "contextless" (x: int, y: int, color: u32) {
