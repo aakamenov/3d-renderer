@@ -42,7 +42,9 @@ mesh := mesh_make(64)
 Mesh :: struct {
     vertices: [dynamic]Vec3,
     faces: [dynamic]Face,
-    rotation: Vec3
+    rotation: Vec3,
+    scale: Vec3,
+    translation: Vec3,
 }
 
 Face :: struct {
@@ -55,6 +57,8 @@ mesh_make :: proc(cap: u16 = 0) -> Mesh {
     return {
         vertices = make([dynamic]Vec3, 0, cap),
         faces = make([dynamic]Face, 0, cap * 2),
+        scale = 1,
+        translation = 0
     }
 }
 

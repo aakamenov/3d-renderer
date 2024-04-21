@@ -13,17 +13,14 @@ pixels: []u32 = nil
 
 FPS :: 30
 FRAME_TARGET_TIME :: 1000 / FPS
-FOV :: 640
+FOV :: 90.0
 ORIGIN :: Vec3 { 0, 0, 0 }
 
 triangles_to_render := make([dynamic]Triangle, 64)
 
-Triangle :: distinct [3]Vec2
-
-Camera :: struct {
-    pos: Vec3,
-    rot: Vec3,
-    angle: f32
+Triangle :: struct{
+    points: [3]Vec2,
+    avg_depth: f32
 }
 
 Render_Mode :: enum {
@@ -44,6 +41,12 @@ main :: proc() {
     defer sdl.Quit()
 
     pixels = make([]u32, win_width * win_height * size_of(u32))
+    camera := camera_make_perspective(
+        f32(linalg.to_radians(FOV)),
+        f32(win_width) / f32(win_height),
+        0.1,
+        100,
+    )
 
     texture := sdl.CreateTexture(
         renderer,
@@ -63,7 +66,7 @@ main :: proc() {
     }
 
     render_mode := Render_Mode.All
-    cull := true 
+    cull := true
 
     game: for {
         event: sdl.Event
@@ -90,7 +93,7 @@ main :: proc() {
         //sdl.SetRenderDrawColor(renderer, 0, 0, 0, 255)
         //sdl.RenderClear(renderer)
 
-        update(cull)
+        update(&camera, cull)
 
         slice.fill(pixels, 0x00000000)
         render(render_mode)
@@ -101,7 +104,7 @@ main :: proc() {
     }
 }
 
-update :: proc(cull: bool) {
+update :: proc(camera: ^Camera, cull: bool) {    
     delta := sdl.GetTicks() - prev_frame_time
     prev_frame_time += delta
 
@@ -111,34 +114,43 @@ update :: proc(cull: bool) {
         sdl.Delay(time_to_wait)
     }
 
-    clear(&triangles_to_render)
-    mesh.rotation += 0.01
+    win_width_half := f32(win_width) / 2
+    win_height_half := f32(win_height) / 2
 
-    for face in mesh.faces {
+    clear(&triangles_to_render)
+    mesh.rotation += 1
+    mesh.translation.z = 5;
+
+    scale_mat := linalg.matrix4_scale(mesh.scale)
+    trans_mat := linalg.matrix4_translate(mesh.translation)
+    rot_mat_x := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.x), [3]f32 { 1, 0, 0 })
+    rot_mat_y := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.y), [3]f32 { 0, 1, 0 })
+    rot_mat_z := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.z), [3]f32 { 0, 0, 1 })
+
+    #no_bounds_check  for face in mesh.faces {
         vertices: [3]Vec3 = {
             mesh.vertices[face.a - 1],
             mesh.vertices[face.b - 1],
             mesh.vertices[face.c - 1],
         }
 
-        transformed_vertices := [3]Vec3 { }
+        transformed_vertices: [3]Vec4 = ---
 
         #unroll for i in 0..<len(vertices) {
-            p := vec3_rot_x(vertices[i], mesh.rotation.x)
-            p = vec3_rot_y(p, mesh.rotation.y)
-            p = vec3_rot_z(p, mesh.rotation.z)
+            world_mat := scale_mat * MAT4_IDENT
+            world_mat *= rot_mat_z
+            world_mat *= rot_mat_y
+            world_mat *= rot_mat_x
+            world_mat = trans_mat * world_mat
 
-            // Translate away from the camera
-            p.z += 5 
-
-            transformed_vertices[i] = p
+            transformed_vertices[i] = world_mat * vec4_from_vec3(vertices[i])
         }
 
         // Backface culling
         if cull {
-            a := transformed_vertices[0]
-            b := transformed_vertices[1]
-            c := transformed_vertices[2]
+            a := vec3_from_vec4(transformed_vertices[0])
+            b := vec3_from_vec4(transformed_vertices[1])
+            c := vec3_from_vec4(transformed_vertices[2])
 
             ab := linalg.normalize(b - a)
             ac := linalg.normalize(c - a)
@@ -156,17 +168,33 @@ update :: proc(cull: bool) {
 
         // Project, scale and translate
         #unroll for i in 0..<len(transformed_vertices) {
-            projected := project_perspective(transformed_vertices[i])
+            projected := camera_project(camera, transformed_vertices[i])
 
-            // Scale and translate to the middle of the screen
-            projected.x += f32(win_width) / 2
-            projected.y += f32(win_height) / 2
+            // Scale into the view
+            projected.x *= win_width_half
+            projected.y *= win_height_half
 
-            projected_triangle[i] = projected
+            // Translate to the middle of the screen
+            projected.x += win_width_half
+            projected.y += win_height_half
+
+            projected_triangle.points[i] = { projected.x, projected.y }
         }
+
+        projected_triangle.avg_depth = (
+            transformed_vertices[0].z +
+            transformed_vertices[1].z +
+            transformed_vertices[2].z
+        ) / 3
 
         append(&triangles_to_render, projected_triangle)
     }
+
+    sort :: proc(a: Triangle, b: Triangle) -> bool {
+        return a.avg_depth < b.avg_depth
+    }
+
+    slice.sort_by(triangles_to_render[:], sort)
 }
 
 render :: proc(mode: Render_Mode) {
@@ -178,30 +206,30 @@ render :: proc(mode: Render_Mode) {
                 triangle := triangles_to_render[i]
 
                 draw_filled_triangle(
-                    { int(triangle[0].x), int(triangle[0].y), },
-                    { int(triangle[1].x), int(triangle[1].y), },
-                    { int(triangle[2].x), int(triangle[2].y), },
+                    { int(triangle.points[0].x), int(triangle.points[0].y), },
+                    { int(triangle.points[1].x), int(triangle.points[1].y), },
+                    { int(triangle.points[2].x), int(triangle.points[2].y), },
                     0xFFFFFFF,
                 )
 
                 draw_triangle(
-                    { int(triangle[0].x), int(triangle[0].y), },
-                    { int(triangle[1].x), int(triangle[1].y), },
-                    { int(triangle[2].x), int(triangle[2].y), },
+                    { int(triangle.points[0].x), int(triangle.points[0].y), },
+                    { int(triangle.points[1].x), int(triangle.points[1].y), },
+                    { int(triangle.points[2].x), int(triangle.points[2].y), },
                     0xFFF00FF,
                 )
             }
         case .Wireframe:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
-                draw_rect(int(triangle[0].x), int(triangle[0].y), 3, 3, 0xFFFFFF00)
-                draw_rect(int(triangle[1].x), int(triangle[1].y), 3, 3, 0xFFFFFF00)
-                draw_rect(int(triangle[2].x), int(triangle[2].y), 3, 3, 0xFFFFFF00)
+                draw_rect(int(triangle.points[0].x), int(triangle.points[0].y), 3, 3, 0xFFFFFF00)
+                draw_rect(int(triangle.points[1].x), int(triangle.points[1].y), 3, 3, 0xFFFFFF00)
+                draw_rect(int(triangle.points[2].x), int(triangle.points[2].y), 3, 3, 0xFFFFFF00)
 
                 draw_triangle(
-                    { int(triangle[0].x), int(triangle[0].y), },
-                    { int(triangle[1].x), int(triangle[1].y), },
-                    { int(triangle[2].x), int(triangle[2].y), },
+                    { int(triangle.points[0].x), int(triangle.points[0].y), },
+                    { int(triangle.points[1].x), int(triangle.points[1].y), },
+                    { int(triangle.points[2].x), int(triangle.points[2].y), },
                     0xFFF00FF,
                 )
             }
@@ -210,9 +238,9 @@ render :: proc(mode: Render_Mode) {
                 triangle := triangles_to_render[i]
 
                 draw_filled_triangle(
-                    { int(triangle[0].x), int(triangle[0].y), },
-                    { int(triangle[1].x), int(triangle[1].y), },
-                    { int(triangle[2].x), int(triangle[2].y), },
+                    { int(triangle.points[0].x), int(triangle.points[0].y), },
+                    { int(triangle.points[1].x), int(triangle.points[1].y), },
+                    { int(triangle.points[2].x), int(triangle.points[2].y), },
                     0xFFF00FF,
                 )
             }
@@ -329,20 +357,6 @@ fill_flat_top :: #force_inline proc(p1: [2]int, p2: [2]int, p3: [2]int, color: u
 set_pixel :: #force_inline proc "contextless" (x: int, y: int, color: u32) {
     if x >= 0 && x < win_width && y >= 0 && y < win_height {
         pixels[(y * win_width) + x] = color
-    }
-}
-
-project_orthographic :: #force_inline proc "contextless" (p: Vec3) -> Vec2 {
-    return {
-        p.x * FOV,
-        p.y * FOV
-    }
-}
-
-project_perspective :: #force_inline proc(p: Vec3) -> Vec2 {
-    return {
-        (p.x * FOV) / p.z,
-        (p.y * FOV) / p.z
     }
 }
 
