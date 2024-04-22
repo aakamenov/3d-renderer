@@ -18,26 +18,26 @@ cube_vertices: [8] Vec3 = {
 // 6 cube faces, 2 triangles per face
 cube_faces: [6 * 2] Face = {
     // front
-    { 1, 2, 3 },
-    { 1, 3, 4 },
+    { { 1, 2, 3 }, 0xFFFFFFFF },
+    { { 1, 3, 4 }, 0xFFFFFFFF },
     //right
-    { 4, 3, 5 },
-    { 4, 5, 6 },
+    { { 4, 3, 5 }, 0xFFFFFFFF },
+    { { 4, 5, 6 }, 0xFFFFFFFF },
     // back
-    { 6, 5, 7 },
-    { 6, 7, 8 },
+    { { 6, 5, 7 }, 0xFFFFFFFF },
+    { { 6, 7, 8 }, 0xFFFFFFFF },
     // left
-    { 8, 7, 2 },
-    { 8, 2, 1 },
+    { { 8, 7, 2 }, 0xFFFFFFFF },
+    { { 8, 2, 1 }, 0xFFFFFFFF },
     // top
-    { 2, 7, 5 },
-    { 2, 5, 3 },
+    { { 2, 7, 5 }, 0xFFFFFFFF },
+    { { 2, 5, 3 }, 0xFFFFFFFF },
     // bottom
-    { 6, 8, 1 },
-    { 6, 1, 4 },
+    { { 6, 8, 1 }, 0xFFFFFFFF },
+    { { 6, 1, 4 }, 0xFFFFFFFF },
 }
 
-mesh := mesh_make(64)
+mesh := Mesh { }
 
 Mesh :: struct {
     vertices: [dynamic]Vec3,
@@ -48,9 +48,8 @@ Mesh :: struct {
 }
 
 Face :: struct {
-    a: u32,
-    b: u32,
-    c: u32,
+    indices: [3]u32,
+    color: u32
 }
 
 mesh_make :: proc(cap: u16 = 0) -> Mesh {
@@ -173,7 +172,10 @@ mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
                     }
                 }
 
-                append(&mesh.faces, Face { f[0], f[1], f[2] })
+                append(
+                    &mesh.faces,
+                    Face { indices = f, color = 0xFFFFFFFF }
+                )
             case '#':
                 continue
             case:

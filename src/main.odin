@@ -15,12 +15,14 @@ FPS :: 30
 FRAME_TARGET_TIME :: 1000 / FPS
 FOV :: 90.0
 ORIGIN :: Vec3 { 0, 0, 0 }
+GLOBAL_LIGHT :: Vec3 { 0, 0, 1 }
 
 triangles_to_render := make([dynamic]Triangle, 64)
 
 Triangle :: struct{
     points: [3]Vec2,
-    avg_depth: f32
+    avg_depth: f32,
+    color: u32
 }
 
 Render_Mode :: enum {
@@ -65,6 +67,10 @@ main :: proc() {
         return
     }
 
+    // append(&mesh.faces, ..cube_faces[:])
+    // append(&mesh.vertices, ..cube_vertices[:])
+    // mesh.scale = 1
+
     render_mode := Render_Mode.All
     cull := true
 
@@ -95,7 +101,7 @@ main :: proc() {
 
         update(&camera, cull)
 
-        slice.fill(pixels, 0x00000000)
+        slice.fill(pixels, 0xFF000000)
         render(render_mode)
 
         sdl.UpdateTexture(texture, nil, slice.first_ptr(pixels), i32(win_width) * size_of(u32))
@@ -129,9 +135,9 @@ update :: proc(camera: ^Camera, cull: bool) {
 
     #no_bounds_check  for face in mesh.faces {
         vertices: [3]Vec3 = {
-            mesh.vertices[face.a - 1],
-            mesh.vertices[face.b - 1],
-            mesh.vertices[face.c - 1],
+            mesh.vertices[face.indices[0] - 1],
+            mesh.vertices[face.indices[1] - 1],
+            mesh.vertices[face.indices[2] - 1],
         }
 
         transformed_vertices: [3]Vec4 = ---
@@ -146,16 +152,16 @@ update :: proc(camera: ^Camera, cull: bool) {
             transformed_vertices[i] = world_mat * vec4_from_vec3(vertices[i])
         }
 
+        a := vec3_from_vec4(transformed_vertices[0])
+        b := vec3_from_vec4(transformed_vertices[1])
+        c := vec3_from_vec4(transformed_vertices[2])
+
+        ab := linalg.normalize(b - a)
+        ac := linalg.normalize(c - a)
+        face_normal := linalg.normalize(linalg.cross(ab, ac))
+
         // Backface culling
         if cull {
-            a := vec3_from_vec4(transformed_vertices[0])
-            b := vec3_from_vec4(transformed_vertices[1])
-            c := vec3_from_vec4(transformed_vertices[2])
-
-            ab := linalg.normalize(b - a)
-            ac := linalg.normalize(c - a)
-            face_normal := linalg.normalize(linalg.cross(ab, ac))
-
             camera_ray := ORIGIN - a
             camera_normal := linalg.dot(face_normal, camera_ray)
 
@@ -174,12 +180,20 @@ update :: proc(camera: ^Camera, cull: bool) {
             projected.x *= win_width_half
             projected.y *= win_height_half
 
+            // Invert y values to account for object model flipped screen y coordinate
+            projected.y *= -1; 
+
             // Translate to the middle of the screen
             projected.x += win_width_half
             projected.y += win_height_half
 
             projected_triangle.points[i] = { projected.x, projected.y }
         }
+
+        // Negate the result as we want the dot product using the inverted light ray
+        // because we specify the light vector as logically going towards the object.
+        light_intensity := -linalg.dot(face_normal, GLOBAL_LIGHT)
+        projected_triangle.color = color_apply_intensity(face.color, light_intensity)
 
         projected_triangle.avg_depth = (
             transformed_vertices[0].z +
@@ -209,14 +223,14 @@ render :: proc(mode: Render_Mode) {
                     { int(triangle.points[0].x), int(triangle.points[0].y), },
                     { int(triangle.points[1].x), int(triangle.points[1].y), },
                     { int(triangle.points[2].x), int(triangle.points[2].y), },
-                    0xFFFFFFF,
+                    triangle.color,
                 )
 
                 draw_triangle(
                     { int(triangle.points[0].x), int(triangle.points[0].y), },
                     { int(triangle.points[1].x), int(triangle.points[1].y), },
                     { int(triangle.points[2].x), int(triangle.points[2].y), },
-                    0xFFF00FF,
+                    0x00000000,
                 )
             }
         case .Wireframe:
@@ -230,7 +244,7 @@ render :: proc(mode: Render_Mode) {
                     { int(triangle.points[0].x), int(triangle.points[0].y), },
                     { int(triangle.points[1].x), int(triangle.points[1].y), },
                     { int(triangle.points[2].x), int(triangle.points[2].y), },
-                    0xFFF00FF,
+                    0xFFFFFFFF,
                 )
             }
         case .Solid_Color:
@@ -241,7 +255,7 @@ render :: proc(mode: Render_Mode) {
                     { int(triangle.points[0].x), int(triangle.points[0].y), },
                     { int(triangle.points[1].x), int(triangle.points[1].y), },
                     { int(triangle.points[2].x), int(triangle.points[2].y), },
-                    0xFFF00FF,
+                    triangle.color,
                 )
             }
     }
@@ -358,6 +372,17 @@ set_pixel :: #force_inline proc "contextless" (x: int, y: int, color: u32) {
     if x >= 0 && x < win_width && y >= 0 && y < win_height {
         pixels[(y * win_width) + x] = color
     }
+}
+
+color_apply_intensity :: #force_inline proc "contextless" (color: u32, factor: f32) -> u32 {
+    factor := math.clamp(factor, 0, 1)
+
+    a := color & 0xFF000000
+    r := u32(f32(color & 0x00FF0000) * factor)
+    g := u32(f32(color & 0x0000FF00) * factor)
+    b := u32(f32(color & 0x000000FF) * factor)
+
+    return a | (r & 0x00FF0000) | (g & 0x0000FF00) | (b & 0x000000FF)
 }
 
 initialize_window :: proc() -> (win: ^sdl.Window, ren: ^sdl.Renderer, success: bool) {
