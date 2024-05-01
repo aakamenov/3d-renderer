@@ -56,7 +56,7 @@ Face :: struct {
 Triangle :: struct{
     points: [3]Vec2,
     uv: [3]Tex2d,
-    avg_depth: f32,
+    avg_depth: f64,
     color: u32
 }
 
@@ -126,10 +126,10 @@ mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
                         end = line_len
                     }
 
-                    val: f32
+                    val: f64
                     parse_ok: bool
 
-                    if val, parse_ok = strconv.parse_f32(line[start:end]); !parse_ok {
+                    if val, parse_ok = strconv.parse_f64(line[start:end]); !parse_ok {
                         ok = false
 
                         break lines

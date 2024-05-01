@@ -6,7 +6,7 @@ Camera :: struct {
     projection: Mat4
 }
 
-camera_make_perspective :: proc "contextless" (fov, aspect, znear, zfar: f32) -> Camera {
+camera_make_perspective :: proc "contextless" (fov, aspect, znear, zfar: f64) -> Camera {
     return {
         projection = linalg.matrix4_perspective(fov, aspect, znear, zfar, false)
     }
