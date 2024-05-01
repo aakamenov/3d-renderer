@@ -18,23 +18,23 @@ cube_vertices: [8] Vec3 = {
 // 6 cube faces, 2 triangles per face
 cube_faces: [6 * 2] Face = {
     // front
-    { { 1, 2, 3 }, 0xFFFFFFFF },
-    { { 1, 3, 4 }, 0xFFFFFFFF },
+    { indices = { 1, 2, 3 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
+    { indices = { 1, 3, 4 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
     //right
-    { { 4, 3, 5 }, 0xFFFFFFFF },
-    { { 4, 5, 6 }, 0xFFFFFFFF },
+    { indices = { 4, 3, 5 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
+    { indices = { 4, 5, 6 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
     // back
-    { { 6, 5, 7 }, 0xFFFFFFFF },
-    { { 6, 7, 8 }, 0xFFFFFFFF },
+    { indices = { 6, 5, 7 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
+    { indices = { 6, 7, 8 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
     // left
-    { { 8, 7, 2 }, 0xFFFFFFFF },
-    { { 8, 2, 1 }, 0xFFFFFFFF },
+    { indices = { 8, 7, 2 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
+    { indices = { 8, 2, 1 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
     // top
-    { { 2, 7, 5 }, 0xFFFFFFFF },
-    { { 2, 5, 3 }, 0xFFFFFFFF },
+    { indices = { 2, 7, 5 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
+    { indices = { 2, 5, 3 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
     // bottom
-    { { 6, 8, 1 }, 0xFFFFFFFF },
-    { { 6, 1, 4 }, 0xFFFFFFFF },
+    { indices = { 6, 8, 1 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
+    { indices = { 6, 1, 4 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
 }
 
 mesh := Mesh { }
@@ -49,7 +49,23 @@ Mesh :: struct {
 
 Face :: struct {
     indices: [3]u32,
+    uv: [3]Tex2d,
     color: u32
+}
+
+Triangle :: struct{
+    points: [3]Vec2,
+    uv: [3]Tex2d,
+    avg_depth: f32,
+    color: u32
+}
+
+triangle_int_coords ::  #force_inline proc "contextless" (t: ^Triangle) -> [3]IntVec {
+    return {
+        { int(t.points[0].x), int(t.points[0].y), },
+        { int(t.points[1].x), int(t.points[1].y), },
+        { int(t.points[2].x), int(t.points[2].y), },
+    }
 }
 
 mesh_make :: proc(cap: u16 = 0) -> Mesh {
@@ -110,9 +126,10 @@ mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
                         end = line_len
                     }
 
-                    val, parse_ok := strconv.parse_f32(line[start:end])
+                    val: f32
+                    parse_ok: bool
 
-                    if !parse_ok {
+                    if val, parse_ok = strconv.parse_f32(line[start:end]); !parse_ok {
                         ok = false
 
                         break lines
@@ -141,9 +158,11 @@ mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
                     }
 
                     end += start
-                    val, parse_ok := strconv.parse_uint(line[start:end])
 
-                    if !parse_ok {
+                    val: uint
+                    parse_ok: bool
+
+                    if val, parse_ok = strconv.parse_uint(line[start:end]); !parse_ok {
                         ok = false
 
                         break lines
@@ -158,14 +177,13 @@ mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
                     }
 
                     if curr <= 2 {
-                        offset := strings.index(line[start:], " ")
-
                         if start == -1 {
                             ok = false
 
                             break lines
                         }
 
+                        offset := strings.index(line[start:], " ")
                         start += offset + 1
                     } else {
                         end = line_len

@@ -19,17 +19,13 @@ GLOBAL_LIGHT :: Vec3 { 0, 0, 1 }
 
 triangles_to_render := make([dynamic]Triangle, 64)
 
-Triangle :: struct{
-    points: [3]Vec2,
-    avg_depth: f32,
-    color: u32
-}
-
 Render_Mode :: enum {
     Wireframe,
     Solid_Color,
-    All
-} 
+    All,
+    Textured,
+    TexturedWireframe
+}
 
 main :: proc() {
     window, renderer, ok := initialize_window()
@@ -58,18 +54,18 @@ main :: proc() {
         i32(win_height),
     )
 
-    result, obj_ok := mesh_obj_load("./assets/cube.obj")
-    mesh = result
+    // result, obj_ok := mesh_obj_load("./assets/cube.obj")
+    // mesh = result
 
-    if !obj_ok {
-        fmt.println("Failed to load .obj file.")
+    // if !obj_ok {
+    //     fmt.println("Failed to load .obj file.")
 
-        return
-    }
+    //     return
+    // }
 
-    // append(&mesh.faces, ..cube_faces[:])
-    // append(&mesh.vertices, ..cube_vertices[:])
-    // mesh.scale = 1
+    append(&mesh.faces, ..cube_faces[:])
+    append(&mesh.vertices, ..cube_vertices[:])
+    mesh.scale = 1
 
     render_mode := Render_Mode.All
     cull := true
@@ -91,6 +87,10 @@ main :: proc() {
                         render_mode = .Wireframe
                     case .NUM3:
                         render_mode = .Solid_Color
+                    case .NUM4:
+                        render_mode = .Textured
+                    case .NUM5:
+                        render_mode = .TexturedWireframe
                     case .c:
                         cull = !cull
                 }
@@ -124,11 +124,12 @@ update :: proc(camera: ^Camera, cull: bool) {
     win_height_half := f32(win_height) / 2
 
     clear(&triangles_to_render)
-    mesh.rotation += 1
+    mesh.rotation.x += 0.5
     mesh.translation.z = 5;
 
     scale_mat := linalg.matrix4_scale(mesh.scale)
     trans_mat := linalg.matrix4_translate(mesh.translation)
+
     rot_mat_x := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.x), [3]f32 { 1, 0, 0 })
     rot_mat_y := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.y), [3]f32 { 0, 1, 0 })
     rot_mat_z := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.z), [3]f32 { 0, 0, 1 })
@@ -143,12 +144,7 @@ update :: proc(camera: ^Camera, cull: bool) {
         transformed_vertices: [3]Vec4 = ---
 
         #unroll for i in 0..<len(vertices) {
-            world_mat := scale_mat * MAT4_IDENT
-            world_mat *= rot_mat_z
-            world_mat *= rot_mat_y
-            world_mat *= rot_mat_x
-            world_mat = trans_mat * world_mat
-
+            world_mat := trans_mat * rot_mat_x * rot_mat_y * rot_mat_z * scale_mat * MAT4_IDENT
             transformed_vertices[i] = world_mat * vec4_from_vec3(vertices[i])
         }
 
@@ -176,12 +172,12 @@ update :: proc(camera: ^Camera, cull: bool) {
         #unroll for i in 0..<len(transformed_vertices) {
             projected := camera_project(camera, transformed_vertices[i])
 
+            // Invert y values to account for object model flipped screen y coordinate
+            projected.y *= -1; 
+
             // Scale into the view
             projected.x *= win_width_half
             projected.y *= win_height_half
-
-            // Invert y values to account for object model flipped screen y coordinate
-            projected.y *= -1; 
 
             // Translate to the middle of the screen
             projected.x += win_width_half
@@ -195,6 +191,8 @@ update :: proc(camera: ^Camera, cull: bool) {
         light_intensity := -linalg.dot(face_normal, GLOBAL_LIGHT)
         projected_triangle.color = color_apply_intensity(face.color, light_intensity)
 
+        projected_triangle.uv = face.uv
+
         projected_triangle.avg_depth = (
             transformed_vertices[0].z +
             transformed_vertices[1].z +
@@ -205,59 +203,66 @@ update :: proc(camera: ^Camera, cull: bool) {
     }
 
     sort :: proc(a: Triangle, b: Triangle) -> bool {
-        return a.avg_depth < b.avg_depth
+        return a.avg_depth > b.avg_depth
     }
 
     slice.sort_by(triangles_to_render[:], sort)
 }
 
 render :: proc(mode: Render_Mode) {
+    // The size of the dot that marks the drawn vertex
+    VERTEX_SIZE :: 3
+
     draw_grid()
+
+    texture := slice.reinterpret([]u32, redbrick_texture)
 
     switch mode {
         case .All:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
+                int_coords := triangle_int_coords(&triangle)
 
-                draw_filled_triangle(
-                    { int(triangle.points[0].x), int(triangle.points[0].y), },
-                    { int(triangle.points[1].x), int(triangle.points[1].y), },
-                    { int(triangle.points[2].x), int(triangle.points[2].y), },
-                    triangle.color,
-                )
-
-                draw_triangle(
-                    { int(triangle.points[0].x), int(triangle.points[0].y), },
-                    { int(triangle.points[1].x), int(triangle.points[1].y), },
-                    { int(triangle.points[2].x), int(triangle.points[2].y), },
-                    0x00000000,
-                )
+                draw_filled_triangle(int_coords, triangle.color)
+                draw_triangle(int_coords, 0x00000000)
             }
         case .Wireframe:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
-                draw_rect(int(triangle.points[0].x), int(triangle.points[0].y), 3, 3, 0xFFFFFF00)
-                draw_rect(int(triangle.points[1].x), int(triangle.points[1].y), 3, 3, 0xFFFFFF00)
-                draw_rect(int(triangle.points[2].x), int(triangle.points[2].y), 3, 3, 0xFFFFFF00)
+                int_coords := triangle_int_coords(&triangle)
 
-                draw_triangle(
-                    { int(triangle.points[0].x), int(triangle.points[0].y), },
-                    { int(triangle.points[1].x), int(triangle.points[1].y), },
-                    { int(triangle.points[2].x), int(triangle.points[2].y), },
-                    0xFFFFFFFF,
-                )
+                draw_rect({ int_coords[0].x, int_coords[0].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
+                draw_rect({ int_coords[1].x, int_coords[1].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
+                draw_rect({ int_coords[2].x, int_coords[2].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
+
+                draw_triangle(int_coords, 0xFFFFFFFF)
             }
         case .Solid_Color:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
+                int_coords := triangle_int_coords(&triangle)
 
-                draw_filled_triangle(
-                    { int(triangle.points[0].x), int(triangle.points[0].y), },
-                    { int(triangle.points[1].x), int(triangle.points[1].y), },
-                    { int(triangle.points[2].x), int(triangle.points[2].y), },
-                    triangle.color,
-                )
+                draw_filled_triangle(int_coords, triangle.color)
             }
+        case .Textured:
+            #no_bounds_check for i in 0..<len(triangles_to_render) {
+                triangle := triangles_to_render[i]
+                int_coords := triangle_int_coords(&triangle)
+
+                draw_textured_triangle(int_coords, triangle.uv, texture)
+            }
+        case .TexturedWireframe:
+            #no_bounds_check for i in 0..<len(triangles_to_render) {
+                triangle := triangles_to_render[i]
+                int_coords := triangle_int_coords(&triangle)
+
+                draw_rect({ int_coords[0].x, int_coords[0].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
+                draw_rect({ int_coords[1].x, int_coords[1].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
+                draw_rect({ int_coords[2].x, int_coords[2].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
+
+                draw_textured_triangle(int_coords, triangle.uv, texture)
+            }
+
     }
 }
 
@@ -266,12 +271,12 @@ draw_grid :: proc() {
 
     for x := 0; x < win_width; x += SIZE {
         for y := 0; y < win_height; y += SIZE {
-            set_pixel(x, y, 0xFF333333)
+            set_pixel({ x, y }, 0xFF333333)
         }
     } 
 }
 
-draw_line :: #force_inline proc "contextless" (from: [2]int, to: [2]int, color: u32) {
+draw_line :: #force_inline proc "contextless" (from: IntVec, to: IntVec, color: u32) {
     delta_x := (to.x - from.x)
     delta_y := (to.y - from.y)
 
@@ -284,68 +289,67 @@ draw_line :: #force_inline proc "contextless" (from: [2]int, to: [2]int, color: 
     y := f32(from.y)
 
     for _ in 0..=side_len {
-        set_pixel(int(math.round(x)), int(math.round(y)), color)
+        set_pixel({ int(math.round(x)), int(math.round(y)) }, color)
         x += x_inc
         y += y_inc
     }
 }
 
-draw_rect :: #force_inline proc "contextless" (x: int, y: int, width: int, height: int, color: u32) {
-    for w in 0..=width {
-        for h in 0..=height {
-            x := x + w
-            y := y + h
-            set_pixel(x, y, color)
+draw_rect :: #force_inline proc "contextless" (r: IntRect, color: u32) {
+    for w in 0..<r.w {
+        for h in 0..<r.h {
+            x := r.x + w
+            y := r.y + h
+
+            set_pixel({ x, y }, color)
         } 
     }
 }
 
-draw_triangle :: #force_inline proc "contextless" (p1: [2]int, p2: [2]int, p3: [2]int, color: u32) {
-    draw_line({p1.x, p1.y}, {p2.x, p2.y}, color)
-    draw_line({p2.x, p2.y}, {p3.x, p3.y}, color)
-    draw_line({p3.x, p3.y}, {p1.x, p1.y}, color)
+draw_triangle :: #force_inline proc "contextless" (p: [3]IntVec, color: u32) {
+    draw_line(p[0], p[1], color)
+    draw_line(p[1], p[2], color)
+    draw_line(p[2], p[0], color)
 }
 
-draw_filled_triangle :: #force_inline proc(p1: [2]int, p2: [2]int, p3: [2]int, color: u32) {
-    p1 := p1
-    p2 := p2
-    p3 := p3
+draw_filled_triangle :: #force_inline proc(points: [3]IntVec, color: u32) {
+    p1, p2, p3 := points[0], points[1], points[2]
 
     if p1.y > p2.y {
-        slice.ptr_swap_non_overlapping(&p1, &p2, size_of(int) * 2)
+        swap(&p1, &p2)
     }
 
     if p2.y > p3.y {
-        slice.ptr_swap_non_overlapping(&p2, &p3, size_of(int) * 2)
+        swap(&p2, &p3)
     }
 
     if p1.y > p2.y {
-        slice.ptr_swap_non_overlapping(&p1, &p2, size_of(int) * 2)
+        swap(&p1, &p2)
     }
 
     if p2.y == p3.y {
         // The triangle itself has a flat bottom
-        fill_flat_btm(p1, p2, p3, color)
+        fill_flat_btm({ p1, p2, p3 }, color)
     } else if p1.y == p2.y {
         // The triangle itself has a flat top
-        fill_flat_top(p1, p2, p3, color)
+        fill_flat_top({ p1, p2, p3 }, color)
     } else {
         x_mid := (f32((p3.x - p1.x) * (p2.y - p1.y)) / f32(p3.y - p1.y)) + f32(p1.x)
         p_mid := [2]int { int(x_mid), p2.y }
 
-        fill_flat_btm(p1, p2, p_mid, color)
-        fill_flat_top(p2, p_mid, p3, color)
+        fill_flat_btm({ p1, p2, p_mid }, color)
+        fill_flat_top({ p2, p_mid, p3 }, color)
     }
 }
 
-fill_flat_btm :: #force_inline proc(p1: [2]int, p2: [2]int, p3: [2]int, color: u32) {
-    inv_slope_1 := f32(p2.x - p1.x) / f32(p2.y - p1.y)
-    inv_slope_2 := f32(p3.x - p1.x) / f32(p3.y - p1.y)
+fill_flat_btm :: #force_inline proc(p: [3]IntVec, color: u32) {
+    inv_slope_1 := f32(p[1].x - p[0].x) / f32(p[1].y - p[0].y)
+    inv_slope_2 := f32(p[2].x - p[0].x) / f32(p[2].y - p[0].y)
 
-    x_start := f32(p1.x)
-    x_end := f32(p1.x)
+    x_start := f32(p[0].x)
+    x_end := f32(p[0].x)
 
-    for y in p1.y..=p3.y {
+    for y in p[0].y..=p[2].y {
         draw_line({ int(x_start), y }, { int(x_end), y }, color)
 
         x_start += inv_slope_1
@@ -353,14 +357,14 @@ fill_flat_btm :: #force_inline proc(p1: [2]int, p2: [2]int, p3: [2]int, color: u
     }
 }
 
-fill_flat_top :: #force_inline proc(p1: [2]int, p2: [2]int, p3: [2]int, color: u32) {
-    inv_slope_1 := f32(p3.x - p1.x) / f32(p3.y - p1.y)
-    inv_slope_2 := f32(p3.x - p2.x) / f32(p3.y - p2.y)
+fill_flat_top :: #force_inline proc(p: [3]IntVec, color: u32) {
+    inv_slope_1 := f32(p[2].x - p[0].x) / f32(p[2].y - p[0].y)
+    inv_slope_2 := f32(p[2].x - p[1].x) / f32(p[2].y - p[1].y)
 
-    x_start := f32(p3.x)
-    x_end := f32(p3.x)
+    x_start := f32(p[2].x)
+    x_end := f32(p[2].x)
 
-    for y := p3.y; y >= p1.y; y -= 1 {
+    for y := p[2].y; y >= p[0].y; y -= 1 {
         draw_line({ int(x_start), y }, { int(x_end), y }, color)
 
         x_start -= inv_slope_1
@@ -368,9 +372,79 @@ fill_flat_top :: #force_inline proc(p1: [2]int, p2: [2]int, p3: [2]int, color: u
     }
 }
 
-set_pixel :: #force_inline proc "contextless" (x: int, y: int, color: u32) {
-    if x >= 0 && x < win_width && y >= 0 && y < win_height {
-        pixels[(y * win_width) + x] = color
+draw_textured_triangle :: proc(points: [3]IntVec, uv: [3]Tex2d, texture: []u32) {
+    p1, p2, p3 := points[0], points[1], points[2]
+    uv1, uv2, uv3 := uv[0], uv[1], uv[2]
+
+    if p1.y > p2.y {
+        swap(&p1, &p2)
+        swap(&uv1, &uv2)
+    }
+
+    if p2.y > p3.y {
+        swap(&p2, &p3)
+        swap(&uv2, &uv3)
+    }
+
+    if p1.y > p2.y {
+        swap(&p1, &p2)
+        swap(&uv1, &uv2)
+    }
+
+    // Draw the upper part (flat bottom)
+    inv_slope_1: f32 = 0
+    inv_slope_2: f32 = 0
+
+    if p2.y - p1.y != 0 do inv_slope_1 = f32(p2.x - p1.x) / math.abs(f32(p2.y - p1.y))
+    if p3.y - p1.y != 0 do inv_slope_2 = f32(p3.x - p1.x) / math.abs(f32(p3.y - p1.y))
+
+    if inv_slope_1 != 0 {
+        for y in p1.y..=p2.y {
+            x_start := p2.x + (y - p2.y) * int(inv_slope_1)
+            x_end := p1.x + (y - p1.y) * int(inv_slope_2)
+
+            if x_end < x_start {
+                temp := x_start
+                x_start = x_end
+                x_end = temp
+            }
+
+            for x in x_start..<x_end {
+                color: u32 
+                if x % 2 == 0 && y % 2 == 0 do color = 0xFFFF00FF; color = 0xFF000000
+                set_pixel({x, y}, color)
+            }
+        }
+    }
+
+    // Draw the bottom part (flat top)
+    inv_slope_1 = 0
+
+    if p3.y - p2.y != 0 do inv_slope_1 = f32(p3.x - p2.x) / math.abs(f32(p3.y - p2.y))
+
+    if inv_slope_1 != 0 {
+        for y in p2.y..=p3.y {
+            x_start := p2.x + (y - p2.y) * int(inv_slope_1)
+            x_end := p1.x + (y - p1.y) * int(inv_slope_2)
+
+            if x_end < x_start {
+                temp := x_start
+                x_start = x_end
+                x_end = temp
+            }
+
+            for x in x_start..<x_end {
+                color: u32 
+                if x % 2 == 0 && y % 2 == 0 do color = 0xFFFF00FF; color = 0xFF000000
+                set_pixel({x, y}, 0xFFFF00FF)
+            }
+        }
+    }
+}
+
+set_pixel :: #force_inline proc "contextless" (p: IntVec color: u32) {
+    if p.x >= 0 && p.x < win_width && p.y >= 0 && p.y < win_height {
+        pixels[(p.y * win_width) + p.x] = color
     }
 }
 
@@ -426,4 +500,10 @@ initialize_window :: proc() -> (win: ^sdl.Window, ren: ^sdl.Renderer, success: b
     success = true
 
     return
+}
+
+swap :: #force_inline proc "contextless" (a, b: ^$T/[$N]$E) {
+    temp: T = a^
+    a^ = b^
+    b^ = temp
 }
