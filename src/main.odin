@@ -124,7 +124,7 @@ update :: proc(camera: ^Camera, cull: bool) {
     win_height_half := f64(win_height) / 2
 
     clear(&triangles_to_render)
-    mesh.rotation.x += 0.5
+    mesh.rotation += 0.5
     mesh.translation.z = 5;
 
     scale_mat := linalg.matrix4_scale(mesh.scale)
@@ -215,7 +215,10 @@ render :: proc(mode: Render_Mode) {
 
     draw_grid()
 
-    texture := slice.reinterpret([]u32, redbrick_texture)
+    texture := Texture {
+        size = { 64, 64 },
+        pixels = slice.reinterpret([]u32, redbrick_texture)
+    }
 
     switch mode {
         case .All:
@@ -372,7 +375,7 @@ fill_flat_top :: #force_inline proc(p: [3]IntVec, color: u32) {
     }
 }
 
-draw_textured_triangle :: proc(points: [3]IntVec, uv: [3]Tex2d, texture: []u32) {
+draw_textured_triangle :: proc(points: [3]IntVec, uv: [3]Tex2d, texture: Texture) {
     p1, p2, p3 := points[0], points[1], points[2]
     uv1, uv2, uv3 := uv[0], uv[1], uv[2]
 
@@ -390,6 +393,13 @@ draw_textured_triangle :: proc(points: [3]IntVec, uv: [3]Tex2d, texture: []u32) 
         swap(&p1, &p2)
         swap(&uv1, &uv2)
     }
+
+    points := [3]Vec2 {
+        { f64(p1.x), f64(p1.y) },
+        { f64(p2.x), f64(p2.y) },
+        { f64(p3.x), f64(p3.y) }
+    }
+    uv := [3]Tex2d { uv1, uv2, uv3 }
 
     // Draw the upper part (flat bottom)
     inv_slope_1: f64
@@ -410,7 +420,7 @@ draw_textured_triangle :: proc(points: [3]IntVec, uv: [3]Tex2d, texture: []u32) 
             }
 
             for x in x_start..<x_end {
-                set_pixel({x, y}, 0xFFFF00FF)
+                draw_texel(texture, points, uv, { x, y })
             }
         }
     }
@@ -432,13 +442,53 @@ draw_textured_triangle :: proc(points: [3]IntVec, uv: [3]Tex2d, texture: []u32) 
             }
 
             for x in x_start..<x_end {
-                set_pixel({x, y}, 0x00000000)
+                draw_texel(texture, points, uv, { x, y })
             }
         }
     }
 }
 
-set_pixel :: #force_inline proc "contextless" (p: IntVec color: u32) {
+draw_texel :: #force_inline proc "contextless" (
+    texture: Texture,
+    points: [3]Vec2,
+    uv: [3]Tex2d,
+    at: IntVec
+) {
+    weights := barycentric_weights(
+        points[0],
+        points[1],
+        points[2],
+        Vec2 { f64(at.x), f64(at.y) }
+    )
+
+    u := uv[0][0] * weights[0] + uv[1][0] * weights[1] + uv[2][0] * weights[2]
+    v := uv[0][1] * weights[0] + uv[1][1] * weights[1] + uv[2][1] * weights[2]
+
+    w := texture.size[0]
+    h := texture.size[1]
+    x := math.clamp(abs(int(u * f64(w))), 0, w - 1)
+    y := math.clamp(abs(int(v * f64(h))), 0, h - 1)
+
+    set_pixel(at, texture.pixels[(w * y) + x])
+}
+
+barycentric_weights :: #force_inline proc "contextless" (a, b, c, p: Vec2) -> Vec3 {
+    ac := c - a
+    ab := b - a
+    pc := c - p
+    pb := b - p
+    ap := p - a
+
+    area_abc := linalg.cross(ac, ab)
+
+    alpha := linalg.cross(pc, pb) / area_abc
+    beta := linalg.cross(ac, ap) / area_abc
+    gamma := 1 - alpha - beta
+
+    return { alpha, beta, gamma }
+}
+
+set_pixel :: #force_inline proc "contextless" (p: IntVec, color: u32) {
     if p.x >= 0 && p.x < win_width && p.y >= 0 && p.y < win_height {
         pixels[(p.y * win_width) + p.x] = color
     }
