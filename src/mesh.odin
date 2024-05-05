@@ -18,23 +18,23 @@ cube_vertices: [8] Vec3 = {
 // 6 cube faces, 2 triangles per face
 cube_faces: [6 * 2] Face = {
     // front
-    { indices = { 1, 2, 3 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    { indices = { 1, 3, 4 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 1, 2, 3 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 1, 3, 4 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
     //right
-    { indices = { 4, 3, 5 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    { indices = { 4, 5, 6 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 4, 3, 5 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 4, 5, 6 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
     // back
-    { indices = { 6, 5, 7 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    { indices = { 6, 7, 8 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 6, 5, 7 }, uv = { { 0, 1 }, { 0, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 6, 7, 8 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
     // left
-    { indices = { 8, 7, 2 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    { indices = { 8, 2, 1 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 8, 7, 2 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 8, 2, 1 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
     // top
-    { indices = { 2, 7, 5 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    { indices = { 2, 5, 3 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 2, 7, 5 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 2, 5, 3 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
     // bottom
-    { indices = { 6, 8, 1 }, uv = { { 0, 0 }, { 0, 1 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    { indices = { 6, 1, 4 }, uv = { { 0, 0 }, { 1, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 6, 8, 1 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
+    { indices = { 6, 1, 4 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
 }
 
 mesh := Mesh { }
@@ -54,13 +54,13 @@ Face :: struct {
 }
 
 Triangle :: struct{
-    points: [3]Vec2,
+    points: [3]Vec4,
     uv: [3]Tex2d,
     avg_depth: f64,
     color: u32
 }
 
-triangle_int_coords ::  #force_inline proc "contextless" (t: ^Triangle) -> [3]IntVec {
+triangle_int_coords :: #force_inline proc "contextless" (t: ^Triangle) -> [3]IntVec {
     return {
         { int(t.points[0].x), int(t.points[0].y), },
         { int(t.points[1].x), int(t.points[1].y), },

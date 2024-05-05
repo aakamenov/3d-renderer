@@ -183,7 +183,7 @@ update :: proc(camera: ^Camera, cull: bool) {
             projected.x += win_width_half
             projected.y += win_height_half
 
-            projected_triangle.points[i] = { projected.x, projected.y }
+            projected_triangle.points[i] = projected
         }
 
         // Negate the result as we want the dot product using the inverted light ray
@@ -250,17 +250,16 @@ render :: proc(mode: Render_Mode) {
         case .Textured:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
-                int_coords := triangle_int_coords(&triangle)
 
-                draw_textured_triangle(int_coords, triangle.uv, texture)
+                draw_textured_triangle(triangle.points, triangle.uv, texture)
             }
         case .TexturedWireframe:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
+
+                draw_textured_triangle(triangle.points, triangle.uv, texture)
+
                 int_coords := triangle_int_coords(&triangle)
-
-                draw_textured_triangle(int_coords, triangle.uv, texture)
-
                 draw_rect({ int_coords[0].x, int_coords[0].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
                 draw_rect({ int_coords[1].x, int_coords[1].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
                 draw_rect({ int_coords[2].x, int_coords[2].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
@@ -375,40 +374,41 @@ fill_flat_top :: #force_inline proc(p: [3]IntVec, color: u32) {
     }
 }
 
-draw_textured_triangle :: proc(points: [3]IntVec, uv: [3]Tex2d, texture: Texture) {
-    p1, p2, p3 := points[0], points[1], points[2]
-    uv1, uv2, uv3 := uv[0], uv[1], uv[2]
+draw_textured_triangle :: proc(points: [3]Vec4, uv: [3]Tex2d, texture: Texture) {
+    sort_points :: #force_inline proc "contextless" (points: [3]Vec4, uv: [3]Tex2d) -> ([3]Vec4, [3]Tex2d) {
+        p1, p2, p3 := points[0], points[1], points[2]
+        uv1, uv2, uv3 := uv[0], uv[1], uv[2]
 
-    if p1.y > p2.y {
-        swap(&p1, &p2)
-        swap(&uv1, &uv2)
+        if p1.y > p2.y {
+            swap(&p1, &p2)
+            swap(&uv1, &uv2)
+        }
+
+        if p2.y > p3.y {
+            swap(&p2, &p3)
+            swap(&uv2, &uv3)
+        }
+
+        if p1.y > p2.y {
+            swap(&p1, &p2)
+            swap(&uv1, &uv2)
+        }
+
+        return { p1, p2, p3 }, { uv1, uv2, uv3 }
     }
 
-    if p2.y > p3.y {
-        swap(&p2, &p3)
-        swap(&uv2, &uv3)
-    }
+    points, uv := sort_points(points, uv)
 
-    if p1.y > p2.y {
-        swap(&p1, &p2)
-        swap(&uv1, &uv2)
-    }
+    p1 := IntVec { int(points[0].x), int(points[0].y) }
+    p2 := IntVec { int(points[1].x), int(points[1].y) }
+    p3 := IntVec { int(points[2].x), int(points[2].y) }
 
-    points := [3]Vec2 {
-        { f64(p1.x), f64(p1.y) },
-        { f64(p2.x), f64(p2.y) },
-        { f64(p3.x), f64(p3.y) }
-    }
-    uv := [3]Tex2d { uv1, uv2, uv3 }
+    inv_slope_2 := f64(p3.x - p1.x) / abs(f64(p3.y - p1.y))
 
     // Draw the upper part (flat bottom)
-    inv_slope_1: f64
-    inv_slope_2: f64
+    if p2.y - p1.y != 0 {
+        inv_slope_1 := f64(p2.x - p1.x) / abs(f64(p2.y - p1.y))
 
-    if p2.y - p1.y != 0 do inv_slope_1 = f64(p2.x - p1.x) / abs(f64(p2.y - p1.y))
-    if p3.y - p1.y != 0 do inv_slope_2 = f64(p3.x - p1.x) / abs(f64(p3.y - p1.y))
-
-    if inv_slope_1 != 0 {
         for y in p1.y..=p2.y {
             x_start := p2.x + int(f64(y - p2.y) * inv_slope_1)
             x_end := p1.x + int(f64(y - p1.y) * inv_slope_2)
@@ -426,11 +426,9 @@ draw_textured_triangle :: proc(points: [3]IntVec, uv: [3]Tex2d, texture: Texture
     }
 
     // Draw the bottom part (flat top)
-    inv_slope_1 = 0
+    if p3.y - p2.y != 0 {
+        inv_slope_1 := f64(p3.x - p2.x) / abs(f64(p3.y - p2.y))
 
-    if p3.y - p2.y != 0 do inv_slope_1 = f64(p3.x - p2.x) / abs(f64(p3.y - p2.y))
-
-    if inv_slope_1 != 0 {
         for y in p2.y..=p3.y {
             x_start := p2.x + int(f64(y - p2.y) * inv_slope_1)
             x_end := p1.x + int(f64(y - p1.y) * inv_slope_2)
@@ -450,26 +448,38 @@ draw_textured_triangle :: proc(points: [3]IntVec, uv: [3]Tex2d, texture: Texture
 
 draw_texel :: #force_inline proc "contextless" (
     texture: Texture,
-    points: [3]Vec2,
+    points: [3]Vec4,
     uv: [3]Tex2d,
     at: IntVec
 ) {
     weights := barycentric_weights(
-        points[0],
-        points[1],
-        points[2],
+        { points[0].x, points[0].y},
+        { points[1].x, points[1].y},
+        { points[2].x, points[2].y},
         Vec2 { f64(at.x), f64(at.y) }
     )
 
-    u := uv[0][0] * weights[0] + uv[1][0] * weights[1] + uv[2][0] * weights[2]
-    v := uv[0][1] * weights[0] + uv[1][1] * weights[1] + uv[2][1] * weights[2]
+    u := (uv[0][0] / points[0].w) * weights[0] +
+         (uv[1][0] / points[1].w) * weights[1] +
+         (uv[2][0] / points[2].w) * weights[2]
 
-    w := texture.size[0]
-    h := texture.size[1]
-    x := math.clamp(abs(int(u * f64(w))), 0, w - 1)
-    y := math.clamp(abs(int(v * f64(h))), 0, h - 1)
+    v := (uv[0][1] / points[0].w) * weights[0] +
+         (uv[1][1] / points[1].w) * weights[1] +
+         (uv[2][1] / points[2].w) * weights[2]
 
-    set_pixel(at, texture.pixels[(w * y) + x])
+    interp_w := (1 / points[0].w) * weights[0] +
+                (1 / points[1].w) * weights[1] +
+                (1 / points[2].w) * weights[2]
+
+    u /= interp_w
+    v /= interp_w
+
+    width := texture.size[0]
+    height := texture.size[1]
+    x := math.clamp(abs(int(u * f64(width))), 0, width - 1)
+    y := math.clamp(abs(int(v * f64(height))), 0, height - 1)
+
+    set_pixel(at, texture.pixels[(width * y) + x])
 }
 
 barycentric_weights :: #force_inline proc "contextless" (a, b, c, p: Vec2) -> Vec3 {
