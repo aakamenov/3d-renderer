@@ -46,26 +46,28 @@ main :: proc() {
         100,
     )
 
-    texture := sdl.CreateTexture(
+    sdl_texture := sdl.CreateTexture(
         renderer,
-        u32(sdl.PixelFormatEnum.ARGB8888),
+        u32(sdl.PixelFormatEnum.RGBA32),
         .STREAMING,
         i32(win_width),
         i32(win_height),
     )
 
-    // result, obj_ok := mesh_obj_load("./assets/cube.obj")
-    // mesh = result
+    result, obj_ok := mesh_obj_load("./assets/drone.obj")
+    mesh = result
 
-    // if !obj_ok {
-    //     fmt.println("Failed to load .obj file.")
+    if !obj_ok {
+        fmt.println("Failed to load .obj file.")
 
-    //     return
-    // }
+        return
+    }
 
-    append(&mesh.faces, ..cube_faces[:])
-    append(&mesh.vertices, ..cube_vertices[:])
-    mesh.scale = 1
+    ok = texture_load(&mesh.texture, "./assets/drone.png")
+
+    if !ok {
+        return
+    }
 
     render_mode := Render_Mode.All
     cull := true
@@ -104,8 +106,8 @@ main :: proc() {
         slice.fill(pixels, 0xFF000000)
         render(render_mode)
 
-        sdl.UpdateTexture(texture, nil, slice.first_ptr(pixels), i32(win_width) * size_of(u32))
-        sdl.RenderCopy(renderer, texture, nil, nil)
+        sdl.UpdateTexture(sdl_texture, nil, slice.first_ptr(pixels), i32(win_width) * size_of(u32))
+        sdl.RenderCopy(renderer, sdl_texture, nil, nil)
         sdl.RenderPresent(renderer)
     }
 }
@@ -124,7 +126,7 @@ update :: proc(camera: ^Camera, cull: bool) {
     win_height_half := f64(win_height) / 2
 
     clear(&triangles_to_render)
-    mesh.rotation += 0.5
+    mesh.rotation.y += 0.5
     mesh.translation.z = 5;
 
     scale_mat := linalg.matrix4_scale(mesh.scale)
@@ -134,11 +136,11 @@ update :: proc(camera: ^Camera, cull: bool) {
     rot_mat_y := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.y), [3]f64 { 0, 1, 0 })
     rot_mat_z := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.z), [3]f64 { 0, 0, 1 })
 
-    #no_bounds_check  for face in mesh.faces {
+    #no_bounds_check for face in mesh.faces {
         vertices: [3]Vec3 = {
-            mesh.vertices[face.indices[0] - 1],
-            mesh.vertices[face.indices[1] - 1],
-            mesh.vertices[face.indices[2] - 1],
+            mesh.vertices[face.indices[0]],
+            mesh.vertices[face.indices[1]],
+            mesh.vertices[face.indices[2]],
         }
 
         transformed_vertices: [3]Vec4 = ---
@@ -215,11 +217,6 @@ render :: proc(mode: Render_Mode) {
 
     draw_grid()
 
-    texture := Texture {
-        size = { 64, 64 },
-        pixels = slice.reinterpret([]u32, redbrick_texture)
-    }
-
     switch mode {
         case .All:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
@@ -251,13 +248,13 @@ render :: proc(mode: Render_Mode) {
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
 
-                draw_textured_triangle(triangle.points, triangle.uv, texture)
+                draw_textured_triangle(triangle.points, triangle.uv, mesh.texture)
             }
         case .TexturedWireframe:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
 
-                draw_textured_triangle(triangle.points, triangle.uv, texture)
+                draw_textured_triangle(triangle.points, triangle.uv, mesh.texture)
 
                 int_coords := triangle_int_coords(&triangle)
                 draw_rect({ int_coords[0].x, int_coords[0].y, VERTEX_SIZE, VERTEX_SIZE }, 0xFFFFFF00)
@@ -399,6 +396,11 @@ draw_textured_triangle :: proc(points: [3]Vec4, uv: [3]Tex2d, texture: Texture) 
 
     points, uv := sort_points(points, uv)
 
+    // Flip the V component to account for inverted UV coordinates
+    uv[0][1] = 1 - uv[0][1]
+    uv[1][1] = 1 - uv[1][1]
+    uv[2][1] = 1 - uv[2][1]
+
     p1 := IntVec { int(points[0].x), int(points[0].y) }
     p2 := IntVec { int(points[1].x), int(points[1].y) }
     p3 := IntVec { int(points[2].x), int(points[2].y) }
@@ -476,8 +478,8 @@ draw_texel :: #force_inline proc "contextless" (
 
     width := texture.size[0]
     height := texture.size[1]
-    x := math.clamp(abs(int(u * f64(width))), 0, width - 1)
-    y := math.clamp(abs(int(v * f64(height))), 0, height - 1)
+    x := abs(int(u * f64(width))) % width
+    y := abs(int(v * f64(height))) % height
 
     set_pixel(at, texture.pixels[(width * y) + x])
 }

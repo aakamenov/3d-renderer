@@ -1,9 +1,39 @@
 package main
 
+import "core:fmt"
+import "core:slice"
+import stbi "vendor:stb/image"
+
 Tex2d :: [2]f64
 Texture :: struct {
     size: [2]int,
     pixels: []u32
+}
+
+texture_load :: proc(tex: ^Texture, filename: cstring) -> bool {
+    w: i32
+    h: i32
+    channels: i32
+    pixels := stbi.load(filename, &w, &h, &channels, 4)
+
+    if pixels == nil {
+        fmt.eprintfln("Error loading texture from file: %s", stbi.failure_reason())
+
+        return false
+    }
+
+    assert(channels == 4)
+
+    tex.size = { int(w), int(h) }
+
+    pixel_slice := slice.from_ptr(pixels, int(w * h * 4))
+    tex.pixels = slice.reinterpret([]u32, pixel_slice)
+
+    return true
+}
+
+texture_free :: proc(tex: Texture) {
+    stbi.image_free(raw_data(tex.pixels))
 }
 
 redbrick_texture := []u8 {

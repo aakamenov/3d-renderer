@@ -3,39 +3,7 @@ package main
 import "core:os"
 import "core:strings"
 import "core:strconv"
-
-cube_vertices: [8] Vec3 = {
-    { -1, -1, -1 },
-    { -1, 1, -1 },
-    { 1, 1, -1 },
-    { 1, -1, -1 },
-    { 1, 1, 1 },
-    { 1, -1, 1 },
-    { -1, 1, 1 },
-    { -1, -1, 1 }
-}
-
-// 6 cube faces, 2 triangles per face
-cube_faces: [6 * 2] Face = {
-    // front
-    { indices = { 1, 2, 3 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
-    { indices = { 1, 3, 4 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    //right
-    { indices = { 4, 3, 5 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
-    { indices = { 4, 5, 6 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    // back
-    { indices = { 6, 5, 7 }, uv = { { 0, 1 }, { 0, 1 }, { 1, 0 } }, color = 0xFFFFFFFF },
-    { indices = { 6, 7, 8 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    // left
-    { indices = { 8, 7, 2 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
-    { indices = { 8, 2, 1 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    // top
-    { indices = { 2, 7, 5 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
-    { indices = { 2, 5, 3 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
-    // bottom
-    { indices = { 6, 8, 1 }, uv = { { 0, 1 }, { 0, 0 }, { 1, 0 } }, color = 0xFFFFFFFF },
-    { indices = { 6, 1, 4 }, uv = { { 0, 1 }, { 1, 0 }, { 1, 1 } }, color = 0xFFFFFFFF },
-}
+import "core:unicode"
 
 mesh := Mesh { }
 
@@ -45,6 +13,7 @@ Mesh :: struct {
     rotation: Vec3,
     scale: Vec3,
     translation: Vec3,
+    texture: Texture
 }
 
 Face :: struct {
@@ -80,11 +49,16 @@ mesh_make :: proc(cap: u16 = 0) -> Mesh {
 mesh_delete :: proc(mesh: ^Mesh) {
     delete(mesh.faces)
     delete(mesh.vertices)
+
+    texture_free(mesh.texture)
 }
 
 mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
     data := os.read_entire_file(filepath) or_return
     defer delete(data)
+
+    tex_coords := make([dynamic]Tex2d, 0, 64)
+    defer delete(tex_coords)
 
     str := string(data)
 
@@ -92,13 +66,9 @@ mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
     ok = true
 
     lines: for line in strings.split_lines_iterator(&str) {
-        if len(line) == 0 || line[0] == '#' || len(line) < 2 {
+        if len(line) == 0 || line[0] == '#' || len(line) < 3 {
             continue
         }
-
-        curr := 0
-        start := 2
-        line_len := len(line)
 
         type := [2]u8 {
             line[0],
@@ -107,95 +77,86 @@ mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
 
         switch type {
             case "v ":
-                p := Vec3 { }
+                start := 2 // skip "v "
+                if res, parse_ok := parse_float_array(line[start:], 3); parse_ok {
+                    append(&mesh.vertices, res)
+                } else {
+                    ok = false
 
-                for start < line_len {
-                    end := -1 
+                    break lines
+                }
+            case "vt":
+                start := 3 // skip "vt "
+                if res, parse_ok := parse_float_array(line[start:], 2); parse_ok {
+                    append(&tex_coords, Tex2d { res[0], res[1] })
+                } else {
+                    ok = false
 
-                    if curr < 2 {
-                        end = strings.index(line[start:], " ")
+                    break lines
+                }
+            case "f ":
+                line := line[2:] // skip "f "
 
-                        if end == -1 {
+                // [3]vertex indices/[3]texture indices/[3]normal indices
+                elems: [3][3]u32
+                el_type := 0
+
+                for group in strings.split_by_byte_iterator(&line, ' ') {
+                    start := 0
+
+                    for i in 0..<3 {
+                        end := start
+
+                        for end < len(group) {
+                            if !unicode.is_number(rune(group[end])) {
+                                break
+                            }
+
+                            end += 1
+                        }
+
+                        val: uint
+                        parse_ok: bool
+
+                        if val, parse_ok = strconv.parse_uint(group[start:end]); !parse_ok {
                             ok = false
 
                             break lines
                         }
 
-                        end += start
-                    } else {
-                        end = line_len
+                        elems[i][el_type] = u32(val)
+                        start = end + 1
                     }
 
-                    val: f64
-                    parse_ok: bool
-
-                    if val, parse_ok = strconv.parse_f64(line[start:end]); !parse_ok {
-                        ok = false
-
-                        break lines
-                    }
-
-                    p[curr] = val
-                    curr += 1
-                    start = end + 1
-
-                    if curr == 3 {
+                    if el_type == 2 {
                         break
                     }
+
+                    el_type += 1
                 }
 
-                append(&mesh.vertices, p)
-            case "f ":
-                f := [3]u32 { }
+                if el_type != 2 {
+                    ok = false
 
-                for start < line_len {
-                    end := strings.index(line[start:], "/")
-
-                    if end == -1 {
-                        ok = false
-
-                        break lines
-                    }
-
-                    end += start
-
-                    val: uint
-                    parse_ok: bool
-
-                    if val, parse_ok = strconv.parse_uint(line[start:end]); !parse_ok {
-                        ok = false
-
-                        break lines
-                    }
-
-                    f[curr] = u32(val)
-                    curr += 1
-                    start = end
-
-                    if curr == 3 {
-                        break
-                    }
-
-                    if curr <= 2 {
-                        if start == -1 {
-                            ok = false
-
-                            break lines
-                        }
-
-                        offset := strings.index(line[start:], " ")
-                        start += offset + 1
-                    } else {
-                        end = line_len
-                    }
+                    break lines
                 }
 
                 append(
                     &mesh.faces,
-                    Face { indices = f, color = 0xFFFFFFFF }
+                    Face {
+                        indices = {
+                            elems[0][0] - 1,
+                            elems[0][1] - 1,
+                            elems[0][2] - 1,
+                        },
+                        uv = {
+                            tex_coords[elems[1][0] - 1],
+                            tex_coords[elems[1][1] - 1],
+                            tex_coords[elems[1][2] - 1],
+                        },
+                        color = 0xFFFFFFFF
+                    }
                 )
-            case '#':
-                continue
             case:
         }
     }
@@ -207,4 +168,33 @@ mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
     }
 
     return mesh, ok
+}
+
+// n MAX == 3
+@(private)
+parse_float_array :: proc(line: string, n: u8) -> (res: [3]f64, ok: bool) {
+    line := line
+    el_index: u8 = 0
+
+    for num in strings.split_by_byte_iterator(&line, ' ') {
+        val: f64
+        parse_ok: bool
+
+        if val, parse_ok = strconv.parse_f64(num); !parse_ok {
+            return
+        }
+
+        res[el_index] = val
+        el_index += 1
+
+        if el_index == n {
+            break
+        }
+    }
+
+    if el_index == n {
+        ok = true
+    }
+
+    return
 }
