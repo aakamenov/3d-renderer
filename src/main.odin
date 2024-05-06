@@ -10,6 +10,7 @@ win_width: int = 800
 win_height: int = 600
 prev_frame_time: u32 = 0;
 pixels: []u32 = nil
+z_buffer: []f64 = nil
 
 FPS :: 30
 FRAME_TARGET_TIME :: 1000 / FPS
@@ -38,7 +39,9 @@ main :: proc() {
     defer sdl.DestroyWindow(window)
     defer sdl.Quit()
 
-    pixels = make([]u32, win_width * win_height * size_of(u32))
+    pixels = make([]u32, win_width * win_height)
+    z_buffer = make([]f64, win_width * win_height)
+
     camera := camera_make_perspective(
         f64(linalg.to_radians(FOV)),
         f64(win_width) / f64(win_height),
@@ -104,6 +107,8 @@ main :: proc() {
         update(&camera, cull)
 
         slice.fill(pixels, 0xFF000000)
+        slice.fill(z_buffer, 0)
+
         render(render_mode)
 
         sdl.UpdateTexture(sdl_texture, nil, slice.first_ptr(pixels), i32(win_width) * size_of(u32))
@@ -127,7 +132,7 @@ update :: proc(camera: ^Camera, cull: bool) {
 
     clear(&triangles_to_render)
     mesh.rotation.y += 0.5
-    mesh.translation.z = 5;
+    mesh.translation.z = 4;
 
     scale_mat := linalg.matrix4_scale(mesh.scale)
     trans_mat := linalg.matrix4_translate(mesh.translation)
@@ -195,20 +200,8 @@ update :: proc(camera: ^Camera, cull: bool) {
 
         projected_triangle.uv = face.uv
 
-        projected_triangle.avg_depth = (
-            transformed_vertices[0].z +
-            transformed_vertices[1].z +
-            transformed_vertices[2].z
-        ) / 3
-
         append(&triangles_to_render, projected_triangle)
     }
-
-    sort :: proc(a: Triangle, b: Triangle) -> bool {
-        return a.avg_depth > b.avg_depth
-    }
-
-    slice.sort_by(triangles_to_render[:], sort)
 }
 
 render :: proc(mode: Render_Mode) {
@@ -221,9 +214,10 @@ render :: proc(mode: Render_Mode) {
         case .All:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
-                int_coords := triangle_int_coords(&triangle)
 
-                draw_filled_triangle(int_coords, triangle.color)
+                draw_filled_triangle(triangle.points, triangle.color)
+
+                int_coords := triangle_int_coords(&triangle)
                 draw_triangle(int_coords, 0x00000000)
             }
         case .Wireframe:
@@ -240,9 +234,8 @@ render :: proc(mode: Render_Mode) {
         case .Solid_Color:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
                 triangle := triangles_to_render[i]
-                int_coords := triangle_int_coords(&triangle)
 
-                draw_filled_triangle(int_coords, triangle.color)
+                draw_filled_triangle(triangle.points, triangle.color)
             }
         case .Textured:
             #no_bounds_check for i in 0..<len(triangles_to_render) {
@@ -311,64 +304,94 @@ draw_triangle :: #force_inline proc "contextless" (p: [3]IntVec, color: u32) {
     draw_line(p[2], p[0], color)
 }
 
-draw_filled_triangle :: #force_inline proc(points: [3]IntVec, color: u32) {
-    p1, p2, p3 := points[0], points[1], points[2]
+draw_filled_triangle :: proc(points: [3]Vec4, color: u32) {
+    sort_points :: #force_inline proc "contextless" (points: [3]Vec4) -> [3]Vec4 {
+        p1, p2, p3 := points[0], points[1], points[2]
 
-    if p1.y > p2.y {
-        swap(&p1, &p2)
+        if p1.y > p2.y {
+            swap(&p1, &p2)
+        }
+
+        if p2.y > p3.y {
+            swap(&p2, &p3)
+        }
+
+        if p1.y > p2.y {
+            swap(&p1, &p2)
+        }
+
+        return { p1, p2, p3 }
     }
 
-    if p2.y > p3.y {
-        swap(&p2, &p3)
+    points := sort_points(points)
+
+    p1 := IntVec { int(points[0].x), int(points[0].y) }
+    p2 := IntVec { int(points[1].x), int(points[1].y) }
+    p3 := IntVec { int(points[2].x), int(points[2].y) }
+
+    inv_slope_2 := f64(p3.x - p1.x) / abs(f64(p3.y - p1.y))
+
+    // Draw the upper part (flat bottom)
+    if p2.y - p1.y != 0 {
+        inv_slope_1 := f64(p2.x - p1.x) / abs(f64(p2.y - p1.y))
+
+        for y in p1.y..=p2.y {
+            x_start := p2.x + int(f64(y - p2.y) * inv_slope_1)
+            x_end := p1.x + int(f64(y - p1.y) * inv_slope_2)
+
+            if x_end < x_start {
+                temp := x_start
+                x_start = x_end
+                x_end = temp
+            }
+
+            for x in x_start..<x_end {
+                draw_triangle_pixel({ x, y }, points, color)
+            }
+        }
     }
 
-    if p1.y > p2.y {
-        swap(&p1, &p2)
-    }
+    // Draw the bottom part (flat top)
+    if p3.y - p2.y != 0 {
+        inv_slope_1 := f64(p3.x - p2.x) / abs(f64(p3.y - p2.y))
 
-    if p2.y == p3.y {
-        // The triangle itself has a flat bottom
-        fill_flat_btm({ p1, p2, p3 }, color)
-    } else if p1.y == p2.y {
-        // The triangle itself has a flat top
-        fill_flat_top({ p1, p2, p3 }, color)
-    } else {
-        x_mid := (f64((p3.x - p1.x) * (p2.y - p1.y)) / f64(p3.y - p1.y)) + f64(p1.x)
-        p_mid := [2]int { int(x_mid), p2.y }
+        for y in p2.y..=p3.y {
+            x_start := p2.x + int(f64(y - p2.y) * inv_slope_1)
+            x_end := p1.x + int(f64(y - p1.y) * inv_slope_2)
 
-        fill_flat_btm({ p1, p2, p_mid }, color)
-        fill_flat_top({ p2, p_mid, p3 }, color)
+            if x_end < x_start {
+                temp := x_start
+                x_start = x_end
+                x_end = temp
+            }
+
+            for x in x_start..<x_end {
+                draw_triangle_pixel({ x, y }, points, color)
+            }
+        }
     }
 }
 
-fill_flat_btm :: #force_inline proc(p: [3]IntVec, color: u32) {
-    inv_slope_1 := f64(p[1].x - p[0].x) / f64(p[1].y - p[0].y)
-    inv_slope_2 := f64(p[2].x - p[0].x) / f64(p[2].y - p[0].y)
+draw_triangle_pixel :: #force_inline proc "contextless" (at: IntVec, points: [3]Vec4, color: u32) {
+    weights := barycentric_weights(
+        { points[0].x, points[0].y},
+        { points[1].x, points[1].y},
+        { points[2].x, points[2].y},
+        Vec2 { f64(at.x), f64(at.y) }
+    )
 
-    x_start := f64(p[0].x)
-    x_end := f64(p[0].x)
+    interp_w := (1 / points[0].w) * weights[0] +
+                (1 / points[1].w) * weights[1] +
+                (1 / points[2].w) * weights[2]
 
-    for y in p[0].y..=p[2].y {
-        draw_line({ int(x_start), y }, { int(x_end), y }, color)
+    z_buffer_index := (win_width * at.y) + at.x
 
-        x_start += inv_slope_1
-        x_end += inv_slope_2
+    if interp_w < z_buffer[z_buffer_index] {
+        return
     }
-}
 
-fill_flat_top :: #force_inline proc(p: [3]IntVec, color: u32) {
-    inv_slope_1 := f64(p[2].x - p[0].x) / f64(p[2].y - p[0].y)
-    inv_slope_2 := f64(p[2].x - p[1].x) / f64(p[2].y - p[1].y)
-
-    x_start := f64(p[2].x)
-    x_end := f64(p[2].x)
-
-    for y := p[2].y; y >= p[0].y; y -= 1 {
-        draw_line({ int(x_start), y }, { int(x_end), y }, color)
-
-        x_start -= inv_slope_1
-        x_end -= inv_slope_2
-    }
+    set_pixel(at, color)
+    z_buffer[z_buffer_index] = interp_w
 }
 
 draw_textured_triangle :: proc(points: [3]Vec4, uv: [3]Tex2d, texture: Texture) {
@@ -473,6 +496,12 @@ draw_texel :: #force_inline proc "contextless" (
                 (1 / points[1].w) * weights[1] +
                 (1 / points[2].w) * weights[2]
 
+    z_buffer_index := (win_width * at.y) + at.x
+
+    if interp_w < z_buffer[z_buffer_index] {
+        return
+    }
+
     u /= interp_w
     v /= interp_w
 
@@ -482,6 +511,7 @@ draw_texel :: #force_inline proc "contextless" (
     y := abs(int(v * f64(height))) % height
 
     set_pixel(at, texture.pixels[(width * y) + x])
+    z_buffer[z_buffer_index] = interp_w
 }
 
 barycentric_weights :: #force_inline proc "contextless" (a, b, c, p: Vec2) -> Vec3 {

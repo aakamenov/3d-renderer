@@ -25,7 +25,6 @@ Face :: struct {
 Triangle :: struct{
     points: [3]Vec4,
     uv: [3]Tex2d,
-    avg_depth: f64,
     color: u32
 }
 
@@ -62,7 +61,7 @@ mesh_obj_load :: proc(filepath: string) -> (mesh: Mesh, ok: bool) {
 
     str := string(data)
 
-    mesh = mesh_make(64)
+    mesh = mesh_make(128)
     ok = true
 
     lines: for line in strings.split_lines_iterator(&str) {
