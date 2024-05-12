@@ -8,14 +8,14 @@ import sdl "vendor:sdl2"
 
 win_width: int = 800
 win_height: int = 600
-prev_frame_time: u32 = 0;
-pixels: []u32 = nil
-z_buffer: []f64 = nil
+dt: f64
+prev_frame_time: u32;
+pixels: []u32
+z_buffer: []f64
 
-FPS :: 30
+FPS :: 60
 FRAME_TARGET_TIME :: 1000 / FPS
 FOV :: 90.0
-ORIGIN :: Vec3 { 0, 0, 0 }
 GLOBAL_LIGHT :: Vec3 { 0, 0, 1 }
 
 triangles_to_render := make([dynamic]Triangle, 64)
@@ -43,7 +43,7 @@ main :: proc() {
     z_buffer = make([]f64, win_width * win_height)
 
     camera := camera_make_perspective(
-        f64(linalg.to_radians(FOV)),
+        linalg.to_radians(FOV),
         f64(win_width) / f64(win_height),
         0.1,
         100,
@@ -57,7 +57,7 @@ main :: proc() {
         i32(win_height),
     )
 
-    result, obj_ok := mesh_obj_load("./assets/drone.obj")
+    result, obj_ok := mesh_obj_load("./assets/efa.obj")
     mesh = result
 
     if !obj_ok {
@@ -66,7 +66,7 @@ main :: proc() {
         return
     }
 
-    ok = texture_load(&mesh.texture, "./assets/drone.png")
+    ok = texture_load(&mesh.texture, "./assets/efa.png")
 
     if !ok {
         return
@@ -98,6 +98,20 @@ main :: proc() {
                         render_mode = .TexturedWireframe
                     case .c:
                         cull = !cull
+                    case .w:
+                        camera.velocity = (5 * dt) * camera.direction
+                        camera.position += camera.velocity
+                    case .s:
+                        camera.velocity = (5 * dt) * camera.direction
+                        camera.position -= camera.velocity
+                    case .a:
+                        camera.yaw += 1 * dt
+                    case .d:
+                        camera.yaw -= 1 * dt
+                    case .UP:
+                        camera.position.y += 3 * dt
+                    case .DOWN:
+                        camera.position.y -= 3 * dt
                 }
         }
 
@@ -117,22 +131,26 @@ main :: proc() {
     }
 }
 
-update :: proc(camera: ^Camera, cull: bool) {    
-    delta := sdl.GetTicks() - prev_frame_time
-    prev_frame_time += delta
-
-    time_to_wait := FRAME_TARGET_TIME - delta
+update :: proc(camera: ^Camera, cull: bool) {
+    time_to_wait := FRAME_TARGET_TIME - (sdl.GetTicks() - prev_frame_time)
 
     if time_to_wait > 0 && time_to_wait <= FRAME_TARGET_TIME {
         sdl.Delay(time_to_wait)
     }
 
+    dt = f64(sdl.GetTicks() - prev_frame_time) / 1000
+    prev_frame_time = sdl.GetTicks()
+
     win_width_half := f64(win_width) / 2
     win_height_half := f64(win_height) / 2
 
     clear(&triangles_to_render)
-    mesh.rotation.y += 0.5
-    mesh.translation.z = 4;
+    mesh.translation.z = 5;
+
+    camera_yaw_rot := linalg.matrix4_rotate(camera.yaw, [3]f64 { 0, 1, 0 })
+    camera.direction = vec3_from_vec4(Vec4 { 0, 0, 1, 1 } * camera_yaw_rot)
+    target := camera.direction + camera.position
+    view_mat := camera_look_at(camera, target, { 0, 1, 0 })
 
     scale_mat := linalg.matrix4_scale(mesh.scale)
     trans_mat := linalg.matrix4_translate(mesh.translation)
@@ -152,7 +170,10 @@ update :: proc(camera: ^Camera, cull: bool) {
 
         #unroll for i in 0..<len(vertices) {
             world_mat := trans_mat * rot_mat_x * rot_mat_y * rot_mat_z * scale_mat * MAT4_IDENT
-            transformed_vertices[i] = world_mat * vec4_from_vec3(vertices[i])
+            v := world_mat * vec4_from_vec3(vertices[i])
+            v = view_mat * v
+
+            transformed_vertices[i] = v
         }
 
         a := vec3_from_vec4(transformed_vertices[0])
@@ -165,7 +186,7 @@ update :: proc(camera: ^Camera, cull: bool) {
 
         // Backface culling
         if cull {
-            camera_ray := ORIGIN - a
+            camera_ray := 0 - a
             camera_normal := linalg.dot(face_normal, camera_ray)
 
             if camera_normal < 0 {
