@@ -9,7 +9,6 @@ import sdl "vendor:sdl2"
 win_width: int = 800
 win_height: int = 600
 dt: f64
-prev_frame_time: u32;
 pixels: []u32
 z_buffer: []f64
 
@@ -74,45 +73,51 @@ main :: proc() {
 
     render_mode := Render_Mode.All
     cull := true
+    prev_frame_time: u32
 
     game: for {
         event: sdl.Event
-        sdl.PollEvent(&event)
-
-        #partial switch event.type {
-            case .QUIT:
-                break game
-            case .KEYUP:
-                #partial switch event.key.keysym.sym {
-                    case .ESCAPE:
-                        break game
-                    case .NUM1:
-                        render_mode = .All
-                    case .NUM2:
-                        render_mode = .Wireframe
-                    case .NUM3:
-                        render_mode = .Solid_Color
-                    case .NUM4:
-                        render_mode = .Textured
-                    case .NUM5:
-                        render_mode = .TexturedWireframe
-                    case .c:
-                        cull = !cull
-                    case .w:
-                        camera.velocity = (5 * dt) * camera.direction
-                        camera.position += camera.velocity
-                    case .s:
-                        camera.velocity = (5 * dt) * camera.direction
-                        camera.position -= camera.velocity
-                    case .a:
-                        camera.yaw += 1 * dt
-                    case .d:
-                        camera.yaw -= 1 * dt
-                    case .UP:
-                        camera.position.y += 3 * dt
-                    case .DOWN:
-                        camera.position.y -= 3 * dt
-                }
+        for sdl.PollEvent(&event) {
+            #partial switch event.type {
+                case .QUIT:
+                    break game
+                case .KEYUP:
+                    #partial switch event.key.keysym.sym {
+                        case .ESCAPE:
+                            break game
+                        case .NUM1:
+                            render_mode = .All
+                        case .NUM2:
+                            render_mode = .Wireframe
+                        case .NUM3:
+                            render_mode = .Solid_Color
+                        case .NUM4:
+                            render_mode = .Textured
+                        case .NUM5:
+                            render_mode = .TexturedWireframe
+                        case .c:
+                            cull = !cull
+                        case .s, .w:
+                            camera.velocity = 0
+                    }
+                case .KEYDOWN:
+                    #partial switch event.key.keysym.sym {
+                        case .w:
+                            camera.velocity = (5 * dt) * camera.direction
+                            camera.position += camera.velocity
+                        case .s:
+                            camera.velocity = (5 * dt) * camera.direction
+                            camera.position -= camera.velocity
+                        case .a:
+                            camera.yaw += 1 * dt
+                        case .d:
+                            camera.yaw -= 1 * dt
+                        case .UP:
+                            camera.position.y += 3 * dt
+                        case .DOWN:
+                            camera.position.y -= 3 * dt
+                    }
+            }
         }
 
         //sdl.SetRenderDrawColor(renderer, 0, 0, 0, 255)
@@ -128,23 +133,24 @@ main :: proc() {
         sdl.UpdateTexture(sdl_texture, nil, slice.first_ptr(pixels), i32(win_width) * size_of(u32))
         sdl.RenderCopy(renderer, sdl_texture, nil, nil)
         sdl.RenderPresent(renderer)
+
+        time_to_wait := FRAME_TARGET_TIME - (sdl.GetTicks() - prev_frame_time)
+
+        if time_to_wait > 0 && time_to_wait <= FRAME_TARGET_TIME {
+            sdl.Delay(time_to_wait)
+        }
+
+        dt = f64(sdl.GetTicks() - prev_frame_time) / 1000
+        prev_frame_time = sdl.GetTicks()
     }
 }
 
 update :: proc(camera: ^Camera, cull: bool) {
-    time_to_wait := FRAME_TARGET_TIME - (sdl.GetTicks() - prev_frame_time)
-
-    if time_to_wait > 0 && time_to_wait <= FRAME_TARGET_TIME {
-        sdl.Delay(time_to_wait)
-    }
-
-    dt = f64(sdl.GetTicks() - prev_frame_time) / 1000
-    prev_frame_time = sdl.GetTicks()
-
     win_width_half := f64(win_width) / 2
     win_height_half := f64(win_height) / 2
 
     clear(&triangles_to_render)
+    mesh.rotation.x += 40 * dt 
     mesh.translation.z = 5;
 
     camera_yaw_rot := linalg.matrix4_rotate(camera.yaw, [3]f64 { 0, 1, 0 })
