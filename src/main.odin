@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:slice"
 import "core:math"
 import "core:math/linalg"
+import sa "core:container/small_array"
 import sdl "vendor:sdl2"
 
 win_width: int = 800
@@ -41,12 +42,14 @@ main :: proc() {
     pixels = make([]u32, win_width * win_height)
     z_buffer = make([]f64, win_width * win_height)
 
-    camera := camera_make_perspective(
-        linalg.to_radians(FOV),
-        f64(win_width) / f64(win_height),
-        0.1,
-        100,
-    )
+    znear := 0.1
+    zfar := 100.
+    aspect := f64(win_width) / f64(win_height)
+    fovy := linalg.to_radians(FOV)
+    fovx := linalg.atan(linalg.tan((fovy / 2) * aspect)) * 2
+
+    camera := camera_make_perspective(fovy, aspect, znear, zfar)
+    frustum_init(fovx, fovy, znear, zfar)
 
     sdl_texture := sdl.CreateTexture(
         renderer,
@@ -56,7 +59,7 @@ main :: proc() {
         i32(win_height),
     )
 
-    result, obj_ok := mesh_obj_load("./assets/efa.obj")
+    result, obj_ok := mesh_obj_load("./assets/cube.obj")
     mesh = result
 
     if !obj_ok {
@@ -65,7 +68,7 @@ main :: proc() {
         return
     }
 
-    ok = texture_load(&mesh.texture, "./assets/efa.png")
+    ok = texture_load(&mesh.texture, "./assets/cube.png")
 
     if !ok {
         return
@@ -150,7 +153,7 @@ update :: proc(camera: ^Camera, cull: bool) {
     win_height_half := f64(win_height) / 2
 
     clear(&triangles_to_render)
-    mesh.rotation.x += 40 * dt 
+    //mesh.rotation.x += 40 * dt 
     mesh.translation.z = 5;
 
     camera_yaw_rot := linalg.matrix4_rotate(camera.yaw, [3]f64 { 0, 1, 0 })
@@ -165,7 +168,7 @@ update :: proc(camera: ^Camera, cull: bool) {
     rot_mat_y := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.y), [3]f64 { 0, 1, 0 })
     rot_mat_z := linalg.matrix4_rotate(linalg.to_radians(mesh.rotation.z), [3]f64 { 0, 0, 1 })
 
-    #no_bounds_check for face in mesh.faces {
+    #no_bounds_check for face, i in mesh.faces {
         vertices: [3]Vec3 = {
             mesh.vertices[face.indices[0]],
             mesh.vertices[face.indices[1]],
@@ -200,34 +203,44 @@ update :: proc(camera: ^Camera, cull: bool) {
             }
         }
 
-        projected_triangle: Triangle = ---
+        polygon: Polygon
+        triangles: sa.Small_Array(MAX_POLYGON_TRIANGLES, Triangle)
 
-        // Project, scale and translate
-        #unroll for i in 0..<len(transformed_vertices) {
-            projected := camera_project(camera, transformed_vertices[i])
+        polygon_from_triangle(&polygon, transformed_vertices, face.uv)
+        polygon_clip(&polygon)
+        polygon_tesselate(&polygon, &triangles)
 
-            // Invert y values to account for object model flipped screen y coordinate
-            projected.y *= -1; 
+        for i in 0..<triangles.len {
+            triangle := triangles.data[i]
+            projected_triangle: Triangle = ---
 
-            // Scale into the view
-            projected.x *= win_width_half
-            projected.y *= win_height_half
+            // Project, scale and translate
+            #unroll for i in 0..<len(triangle.points) {
+                projected := camera_project(camera, triangle.points[i])
 
-            // Translate to the middle of the screen
-            projected.x += win_width_half
-            projected.y += win_height_half
+                // Invert y values to account for object model flipped screen y coordinate
+                projected.y *= -1; 
 
-            projected_triangle.points[i] = projected
+                // Scale into the view
+                projected.x *= win_width_half
+                projected.y *= win_height_half
+
+                // Translate to the middle of the screen
+                projected.x += win_width_half
+                projected.y += win_height_half
+
+                projected_triangle.points[i] = projected
+            }
+
+            // Negate the result as we want the dot product using the inverted light ray
+            // because we specify the light vector as logically going towards the object.
+            light_intensity := -linalg.dot(face_normal, GLOBAL_LIGHT)
+            projected_triangle.color = color_apply_intensity(face.color, light_intensity)
+
+            projected_triangle.uv = triangle.uv
+
+            append(&triangles_to_render, projected_triangle)
         }
-
-        // Negate the result as we want the dot product using the inverted light ray
-        // because we specify the light vector as logically going towards the object.
-        light_intensity := -linalg.dot(face_normal, GLOBAL_LIGHT)
-        projected_triangle.color = color_apply_intensity(face.color, light_intensity)
-
-        projected_triangle.uv = face.uv
-
-        append(&triangles_to_render, projected_triangle)
     }
 }
 
