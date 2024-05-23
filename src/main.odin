@@ -153,7 +153,7 @@ update :: proc(camera: ^Camera, cull: bool) {
     win_height_half := f64(win_height) / 2
 
     clear(&triangles_to_render)
-    //mesh.rotation.x += 40 * dt 
+    mesh.rotation.y += 40 * dt 
     mesh.translation.z = 5;
 
     camera_yaw_rot := linalg.matrix4_rotate(camera.yaw, [3]f64 { 0, 1, 0 })
@@ -425,8 +425,9 @@ draw_triangle_pixel :: #force_inline proc "contextless" (at: IntVec, points: [3]
                 (1 / points[2].w) * weights[2]
 
     z_buffer_index := (win_width * at.y) + at.x
+    z_buffer_value := 1. if at.x < 0 || at.x >= win_width || at.y < 0 || at.y >= win_height else z_buffer[z_buffer_index]
 
-    if interp_w < z_buffer[z_buffer_index] {
+    if interp_w < z_buffer_value {
         return
     }
 
@@ -537,8 +538,9 @@ draw_texel :: #force_inline proc "contextless" (
                 (1 / points[2].w) * weights[2]
 
     z_buffer_index := (win_width * at.y) + at.x
+    z_buffer_value := 1. if at.x < 0 || at.x >= win_width || at.y < 0 || at.y >= win_height else z_buffer[z_buffer_index]
 
-    if interp_w < z_buffer[z_buffer_index] {
+    if interp_w < z_buffer_value {
         return
     }
 
